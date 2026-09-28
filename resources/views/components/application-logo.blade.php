@@ -1,0 +1,1 @@
+<x-fh-logo-mark {{ $attributes }} />
