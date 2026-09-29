@@ -90,9 +90,8 @@ class EventDiscoveryTest extends TestCase
 
         $this->actingAs($owner)->post(route('events.store'), [
             'title' => 'Premiere Night', 'category_id' => $category->id,
-            'venue_name' => 'Grand Cinema', 'address' => '1 Main Road', 'city' => 'Lahore',
+            'venue_name' => 'Grand Cinema', 'address' => '1 Main Road', 'country' => 'Pakistan', 'city' => 'Karachi',
             'start_datetime' => now()->addDays(14)->format('Y-m-d\TH:i'),
-            'latitude' => '0', 'longitude' => '0',
             'ticket_link' => 'https://tickets.example.test/premiere',
             'description' => 'Community screening night.',
             'cover_image' => UploadedFile::fake()->image('premiere.jpg'),
@@ -100,25 +99,25 @@ class EventDiscoveryTest extends TestCase
 
         $event = Event::where('title', 'Premiere Night')->firstOrFail();
         $this->assertSame($owner->id, $event->user_id);
-        $this->assertSame(0.0, (float) $event->latitude);
+        $this->assertEqualsWithDelta(24.8607, (float) $event->latitude, 0.0001);
+        $this->assertSame('Pakistan', $event->country);
         $this->assertDatabaseHas('events', ['id' => $event->id, 'ticket_link' => 'https://tickets.example.test/premiere']);
         Storage::disk('public')->assertExists($event->cover_image);
         $this->get(route('events.index'))->assertOk()->assertSee('Premiere Night');
 
         $this->actingAs($other)->patch(route('events.update', $event), [
             'title' => 'Unauthorized edit', 'category_id' => $category->id,
-            'venue_name' => 'Grand Cinema', 'city' => 'Lahore',
+            'venue_name' => 'Grand Cinema', 'country' => 'Pakistan', 'city' => 'Lahore',
             'start_datetime' => now()->addDays(15)->format('Y-m-d\TH:i'),
-            'latitude' => '0', 'longitude' => '0',
         ])->assertForbidden();
 
         $this->actingAs($owner)->patch(route('events.update', $event), [
             'title' => 'Updated Premiere', 'category_id' => $category->id,
-            'venue_name' => 'Grand Cinema', 'city' => 'Lahore',
+            'venue_name' => 'Grand Cinema', 'country' => 'Pakistan', 'city' => 'Lahore',
             'start_datetime' => now()->addDays(15)->format('Y-m-d\TH:i'),
-            'latitude' => '0', 'longitude' => '0',
         ])->assertRedirect(route('events.show', $event->fresh()));
         $this->assertDatabaseHas('events', ['id' => $event->id, 'title' => 'Updated Premiere']);
+        $this->assertEqualsWithDelta(31.5204, (float) $event->fresh()->latitude, 0.0001);
 
         EventRsvp::create(['event_id' => $event->id, 'user_id' => $other->id, 'status' => 'going']);
         $this->actingAs($owner)->delete(route('events.destroy', $event->fresh()))
@@ -131,6 +130,46 @@ class EventDiscoveryTest extends TestCase
         $this->actingAs($admin)->post(route('admin.events.restore', $event->id))->assertRedirect();
         $this->assertDatabaseHas('events', ['id' => $event->id, 'deleted_at' => null]);
         Storage::disk('public')->assertExists($event->cover_image);
+    }
+
+    public function test_country_and_city_filters_are_combined_and_form_defaults_to_karachi(): void
+    {
+        $owner = User::factory()->create();
+        $category = $this->category('Anime');
+        $karachi = $this->event($owner, $category, ['title' => 'Karachi Anime', 'country' => 'Pakistan', 'city' => 'Karachi', 'latitude' => 24.8607, 'longitude' => 67.0011]);
+        $this->event($owner, $category, ['title' => 'Dubai Anime', 'country' => 'United Arab Emirates', 'city' => 'Dubai']);
+
+        $this->getJson(route('events.filter', ['country' => 'Pakistan', 'city' => 'Karachi', 'category' => $category->id]))
+            ->assertOk()->assertJsonPath('total', 1)->assertJsonPath('mapEvents.0.id', $karachi->id)
+            ->assertJsonPath('mapEvents.0.country', 'Pakistan');
+        $this->actingAs($owner)->get(route('events.create'))->assertOk()->assertSee('Pakistan')->assertSee('Karachi');
+    }
+
+    public function test_admin_can_create_and_edit_events_with_country_city_and_automatic_coordinates(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $category = $this->category('Live Events');
+
+        $this->actingAs($admin)->get(route('admin.events.create'))->assertOk()->assertSee('Country')->assertSee('Latitude');
+        $this->actingAs($admin)->post(route('admin.events.store'), [
+            'title' => 'Dubai Admin Event', 'category_id' => $category->id,
+            'venue_name' => 'Expo Centre', 'country' => 'United Arab Emirates', 'city' => 'Dubai',
+            'start_datetime' => now()->addDays(12)->format('Y-m-d\\TH:i'),
+        ])->assertRedirect(route('admin.events.index'))->assertSessionHas('success');
+
+        $event = Event::where('title', 'Dubai Admin Event')->firstOrFail();
+        $this->assertSame('United Arab Emirates', $event->country);
+        $this->assertEqualsWithDelta(25.2048, (float) $event->latitude, 0.0001);
+        $this->actingAs($admin)->get(route('admin.events.edit', $event))->assertOk()->assertSee('United Arab Emirates');
+        $this->actingAs($admin)->put(route('admin.events.update', $event), [
+            'title' => 'Tokyo Admin Event', 'category_id' => $category->id,
+            'venue_name' => 'Tokyo Hall', 'country' => 'Japan', 'city' => 'Tokyo',
+            'start_datetime' => now()->addDays(13)->format('Y-m-d\\TH:i'),
+        ])->assertRedirect(route('admin.events.index'));
+        $this->assertDatabaseHas('events', [
+            'id' => $event->id, 'title' => 'Tokyo Admin Event', 'country' => 'Japan',
+            'latitude' => 35.6762, 'longitude' => 139.6503,
+        ]);
     }
 
     private function category(string $name): Category

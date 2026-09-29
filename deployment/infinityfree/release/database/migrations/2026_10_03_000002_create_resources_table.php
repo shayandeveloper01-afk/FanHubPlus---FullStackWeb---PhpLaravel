@@ -1,0 +1,35 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('resources', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('content_id')->nullable()->constrained()->nullOnDelete();
+            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+            $table->string('title');
+            $table->string('slug')->unique();
+            $table->text('description')->nullable();
+            $table->enum('type', ['wallpaper', 'fanart', 'fanfic', 'subtitle', 'theme', 'audio']);
+            $table->string('file_path');
+            $table->unsignedInteger('file_size_kb');
+            $table->string('thumbnail_path')->nullable();
+            $table->unsignedBigInteger('download_count')->default(0);
+            $table->string('license', 100)->nullable();
+            $table->boolean('is_approved')->default(false)->index();
+            $table->text('moderation_reason')->nullable();
+            $table->timestamps();
+            $table->index(['content_id', 'is_approved']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('resources');
+    }
+};
